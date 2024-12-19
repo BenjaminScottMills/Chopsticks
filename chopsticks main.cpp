@@ -484,7 +484,7 @@ class Gamestate
                 {
                     currentNext.updateResult(previousStates, true);
                     if(currentNext.optResult != optResult) continue;
-                    currentNext.checkBestOptionWithDistance(previousStates);
+                    if(optResult != loop) currentNext.checkBestOptionWithDistance(previousStates);
                 }
                 else
                 {
