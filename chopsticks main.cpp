@@ -10,6 +10,16 @@ enum option : char {hit11, hit12, hit21, hit22, combine1, combine2, combine3};
 
 class Gamestate;
 
+bool contains(vector<int> vec, int val)
+{
+    for (int i = 0; i < vec.size(); i ++)
+    {
+        if (vec[i] == val) return true;
+    }
+
+    return false;
+}
+
 class Gamestate
 {
     public:
@@ -17,11 +27,13 @@ class Gamestate
         short p1h2;
         short p2h1;
         short p2h2;
-        unsigned short distanceToOutcome = 0;
+        short distanceToOutcome = 0;
         short id = 6;
+        int indexInPreviousStates = -1;
         bool isP1Turn;
         result optResult = unknown;
-        vector<unsigned int> indexesThatRequireThis = {};
+        vector<int> indexesThatRequireThis = {};
+        vector<int> indexesThatThisRequires = {};
 
         void process()
         {
@@ -260,25 +272,21 @@ class Gamestate
                 }
             }
         }
-        
-        unsigned int findIndex(const vector<Gamestate> & previousStates)
-        {
-            unsigned int size = previousStates.size();
 
-            for(unsigned int i = 0; i < size; i++)
-            {
-                if(id == previousStates[i].id)
-                {
-                    return i;
-                }
-            }
-            return -1;
-        }
-
-        void updatePreviousStates(vector<Gamestate> & previousStates, bool setAsUnknown)
+        // Returns the index of this in previousStates.
+        int updatePreviousStates(vector<Gamestate> & previousStates, bool setAsUnknown)
         {
             int size = previousStates.size();
 
+            if(indexInPreviousStates != -1)
+            {
+                if(!setAsUnknown)
+                {
+                    previousStates[indexInPreviousStates].optResult = optResult;
+                }
+                return indexInPreviousStates;
+            }
+            
             for(int i = 0; i < size; i++)
             {
                 if(id == previousStates[i].id)
@@ -286,9 +294,8 @@ class Gamestate
                     if(!setAsUnknown)
                     {
                         previousStates[i].optResult = optResult;
-                        previousStates[i].distanceToOutcome = distanceToOutcome;
                     }
-                    return;
+                    return i;
                 }
             }
         
@@ -298,6 +305,10 @@ class Gamestate
             {
                 previousStates[size].optResult = unknown;
             }
+
+            previousStates[size].indexInPreviousStates = size;
+
+            return size;
         }
 
         void updateResult(vector<Gamestate> & previousStates, bool checkingForLoops)
@@ -306,10 +317,33 @@ class Gamestate
 
             if(optResult != unknown && optResult != loop) return;
 
+            if(indexInPreviousStates != -1)
+            {
+                if(checkingForLoops)
+                {
+                    optResult = previousStates[indexInPreviousStates].optResult;
+                }
+                else
+                {
+                    if (previousStates[indexInPreviousStates].optResult == unknown)
+                    {
+                        optResult = loop;
+                    }
+                    else
+                    {
+                        optResult = previousStates[indexInPreviousStates].optResult;
+                    }
+                }
+
+                return;
+            }
+
             for(int i = 0; i < size; i++)
             {
                 if(id == previousStates[i].id)
                 {
+                    indexInPreviousStates = i;
+                    
                     if(checkingForLoops)
                     {
                         optResult = previousStates[i].optResult;
@@ -326,85 +360,64 @@ class Gamestate
                         }
                     }
 
-                    distanceToOutcome = previousStates[i].distanceToOutcome;
-
                     return;
                 }
             }
         }
 
-        option checkBestOption(vector<Gamestate> & previousStates, bool firstCall = true, bool checkingForLoops = false)
+        void checkBestOptionRecursive(vector<Gamestate> & previousStates, bool checkingForLoops)
         {
-            Gamestate temp;
-            option bestOption;
-            bool alteredThisLoop;
-            unsigned int size;
+            Gamestate currentNext;
 
             if(checkingForLoops && optResult != loop)
             {
-                return combine3;// this value will never be used.
+                return;
             }
 
             if(checkingForLoops) optResult = unknown;
 
-            distanceToOutcome = 0;
-
-            updatePreviousStates(previousStates, true);
+            indexInPreviousStates = updatePreviousStates(previousStates, true);
 
             for(char i = 0; i < 7; i++)
             {
-                temp = getResult((option)i);
+                currentNext = getResult((option)i);
 
-                if(temp.optResult == unknown)
+                if(currentNext.optResult == unknown)
                 {
-                    temp.updateResult(previousStates, checkingForLoops);
+                    currentNext.updateResult(previousStates, checkingForLoops);
                 }
 
-                if (temp.optResult == unknown)
+                if (currentNext.optResult == unknown)
                 {
-                    temp.checkBestOption(previousStates, false, checkingForLoops);
+                    currentNext.checkBestOptionRecursive(previousStates, checkingForLoops);
                 }
-                switch(temp.optResult)
+                switch(currentNext.optResult)
                 {
                     case loop:
                         if((isP1Turn && optResult != p1Win) || (!isP1Turn && optResult != p2Win))
                         {
                             if(!checkingForLoops)
                             {
-                                previousStates[temp.findIndex(previousStates)].indexesThatRequireThis.push_back(findIndex(previousStates));// we will get replicas, but its worth.
+                                if(!contains(previousStates[currentNext.indexInPreviousStates].indexesThatRequireThis, indexInPreviousStates))
+                                {
+                                    previousStates[currentNext.indexInPreviousStates].indexesThatRequireThis.push_back(indexInPreviousStates);
+                                    indexesThatThisRequires.push_back(currentNext.indexInPreviousStates);
+                                }
                             }
 
                             optResult = loop;
-                            bestOption = (option)i;
-                            distanceToOutcome = 0;
                         }
                         break;
                     case p1Win:
-                        if(isP1Turn && (optResult != p1Win || distanceToOutcome > temp.distanceToOutcome))
+                        if(isP1Turn || optResult == invalid || optResult == unknown)
                         {
                             optResult = p1Win;
-                            bestOption = (option)i;
-                            distanceToOutcome = temp.distanceToOutcome + 1;
-                        }
-                        if(!isP1Turn && (optResult == invalid || optResult == unknown || (optResult == p1Win && distanceToOutcome < temp.distanceToOutcome)))
-                        {
-                            optResult = p1Win;
-                            bestOption = (option)i;
-                            distanceToOutcome = temp.distanceToOutcome + 1;
                         }
                         break;
                     case p2Win:
-                        if(!isP1Turn && (optResult != p2Win || distanceToOutcome > temp.distanceToOutcome))
+                        if(!isP1Turn || optResult == invalid || optResult == unknown)
                         {
                             optResult = p2Win;
-                            bestOption = (option)i;
-                            distanceToOutcome = temp.distanceToOutcome + 1;
-                        }
-                        if(isP1Turn && (optResult == invalid || optResult == unknown || (optResult == p2Win && distanceToOutcome < temp.distanceToOutcome)))
-                        {
-                            optResult = p2Win;
-                            bestOption = (option)i;
-                            distanceToOutcome = temp.distanceToOutcome + 1;
                         }
                         break;
                 }
@@ -412,37 +425,160 @@ class Gamestate
 
             updatePreviousStates(previousStates, false);
 
-            if(firstCall)
+            if(optResult != loop)
             {
-                size = previousStates.size();
-
-                do// Here, run through and recheck everything. Before this, stuff labeled loop could actually lead to something else. After this, anything labled loop will actually be a loop.
+                for (int i = 0; i < indexesThatThisRequires.size(); i++)
                 {
-                    alteredThisLoop = false;
-                    for(unsigned int i = 0; i < size; i++)
+                    for(int j = 0; j < previousStates[indexesThatThisRequires[i]].indexesThatRequireThis.size(); j++)
                     {
-                        if(previousStates[i].optResult != loop && previousStates[i].indexesThatRequireThis.size() != 0)
+                        if(previousStates[indexesThatThisRequires[i]].indexesThatRequireThis[j] == indexInPreviousStates)
                         {
-                            for(unsigned int j = 0; j < previousStates[i].indexesThatRequireThis.size(); j++)
-                            {
-                                previousStates[previousStates[i].indexesThatRequireThis[j]].checkBestOption(previousStates, false, true);
-                                if(previousStates[previousStates[i].indexesThatRequireThis[j]].optResult != loop)
-                                {
-                                    alteredThisLoop = true;
-                                }
-                            }
-                            previousStates[i].indexesThatRequireThis = {};
+                            previousStates[indexesThatThisRequires[i]].indexesThatRequireThis.erase(previousStates[indexesThatThisRequires[i]].indexesThatRequireThis.begin() + j);
+                            break;
                         }
                     }
+                }
 
-                } while (alteredThisLoop);
-
-                optResult = unknown;
-
-                return checkBestOption(previousStates, false, false);
+                indexesThatThisRequires = {};
             }
 
+            return;
+        }
+
+        // Does 2 things: updates distanceToOutcome (important for the recursive case) and determines the best option (important for the base case).
+        option checkBestOptionWithDistance(vector<Gamestate> & previousStates)
+        {
+            Gamestate currentNext;
+            option bestOption;
+
+            distanceToOutcome = -1;
+
+            for(int i = 0; i < previousStates.size(); i++)
+            {
+                if(id == previousStates[i].id)
+                {
+                    indexInPreviousStates = i;
+                }
+            }
+
+            if(previousStates[indexInPreviousStates].distanceToOutcome == -1)
+            {
+                distanceToOutcome = -2;// signal value meaning looping.
+                return hit11;// what we return doesn't matter here
+            }
+            else if (previousStates[indexInPreviousStates].optResult != loop && previousStates[indexInPreviousStates].distanceToOutcome == 0)
+            {
+                previousStates[indexInPreviousStates].distanceToOutcome = -1;
+            }
+            else if (previousStates[indexInPreviousStates].optResult != loop)
+            {
+                distanceToOutcome = previousStates[indexInPreviousStates].distanceToOutcome;
+                return hit11;// what we return doesn't matter here
+            }
+
+            for(char i = 0; i < 7; i++)
+            {
+                currentNext = getResult((option)i);
+
+                if(currentNext.optResult == unknown)
+                {
+                    currentNext.updateResult(previousStates, true);
+                    if(currentNext.optResult != optResult) continue;
+                    currentNext.checkBestOptionWithDistance(previousStates);
+                }
+                else
+                {
+                    if(currentNext.optResult != optResult) continue;// potentially this needs to be changed.
+                }
+
+                switch(optResult)
+                {
+                    case loop:
+                        distanceToOutcome = 0;
+                        return (option)i;
+                    case p1Win:
+                        if(currentNext.distanceToOutcome == -2)
+                        {
+                            if(!isP1Turn)
+                            {
+                                distanceToOutcome = -2;
+                                bestOption = (option)i;
+                                i = 7;
+                            }
+                            else if (distanceToOutcome == -1)
+                            {
+                                distanceToOutcome = -2;
+                                bestOption = (option)i;
+                            }
+                        }
+                        else if((isP1Turn && (distanceToOutcome > currentNext.distanceToOutcome || distanceToOutcome <= -1)) || (!isP1Turn && distanceToOutcome < currentNext.distanceToOutcome))
+                        {
+                            bestOption = (option)i;
+                            distanceToOutcome = currentNext.distanceToOutcome + 1;
+                        }
+                        break;
+                    case p2Win:
+                        if(currentNext.distanceToOutcome == -2)
+                        {
+                            if(isP1Turn)
+                            {
+                                distanceToOutcome = -2;
+                                bestOption = (option)i;
+                                i = 7;
+                            }
+                            else if (distanceToOutcome == -1)
+                            {
+                                distanceToOutcome = -2;
+                                bestOption = (option)i;
+                            }
+                        }
+                        else if((!isP1Turn && (distanceToOutcome > currentNext.distanceToOutcome || distanceToOutcome <= -1)) || (isP1Turn && distanceToOutcome < currentNext.distanceToOutcome))
+                        {
+                            bestOption = (option)i;
+                            distanceToOutcome = currentNext.distanceToOutcome + 1;
+                        }
+                        break;
+                }
+            }
+
+            if(distanceToOutcome == -2) previousStates[indexInPreviousStates].distanceToOutcome = 0;
+            else previousStates[indexInPreviousStates].distanceToOutcome = distanceToOutcome;
+
             return bestOption;
+        }
+
+        option checkBestOption()
+        {
+            bool alteredThisLoop;
+            int size;
+            vector<Gamestate> previousStates = {};
+
+            checkBestOptionRecursive(previousStates, false);
+
+            size = previousStates.size();
+
+            do// Here, run through and recheck everything. Before this, stuff labeled loop could actually lead to something else. After this, anything labled loop will actually be a loop.
+            {
+                alteredThisLoop = false;
+                for(int i = 0; i < size; i++)
+                {
+                    if(previousStates[i].optResult != loop && previousStates[i].indexesThatRequireThis.size() != 0)
+                    {
+                        for(int j = 0; j < previousStates[i].indexesThatRequireThis.size(); j++)
+                        {
+                            previousStates[previousStates[i].indexesThatRequireThis[j]].checkBestOptionRecursive(previousStates, true);
+                        }
+
+                        previousStates[i].indexesThatRequireThis = {};
+                        alteredThisLoop = true;
+                    }
+                }
+
+            } while (alteredThisLoop);
+
+            updateResult(previousStates, true);
+
+            return checkBestOptionWithDistance(previousStates);
         }
 };
 
@@ -456,7 +592,6 @@ void play(bool isPlayerTurn)
     Gamestate tempGameState;
     Gamestate mainGameState = Gamestate(1, 1, 1, 1, !isPlayerTurn);
     string input;
-    vector<Gamestate> listOfStates;
 
     if(!isPlayerTurn)
     {
@@ -558,7 +693,7 @@ void play(bool isPlayerTurn)
         }
         else
         {
-            mainGameState = mainGameState.getResult(mainGameState.checkBestOption(listOfStates));
+            mainGameState = mainGameState.getResult(mainGameState.checkBestOption());
 
             isPlayerTurn = true;
         }
